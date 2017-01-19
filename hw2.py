@@ -204,12 +204,14 @@ def hierarchical(profiles, linkage='average'):
     for x in range(0, len(profiles)):
         leaf = ExpressionCluster.make_leaf(profiles[x])
         leafNodes.append(leaf)
+        # temporarily record each cluster and indices of profiles it holds
         clusters.append({"node": leaf, "indices": [x]})
 
-
-    # Step 2: build distance matrix
+    # Step 2: build /update distance matrix
     numInClusters = 0;
+    #when all the profiles converged to one root cluster, terminate
     while(numInClusters<len(leafNodes)):
+        #initial score matrix
         dMatrix = []
         minVal = numpy.inf
         minPair = [0, 0]
@@ -217,6 +219,7 @@ def hierarchical(profiles, linkage='average'):
             dMatrix.append([])
             for j in range(0, len(clusters)):
                 if i!=j:
+                    # calculate the Euclidean distance between two clusters
                     dis = hierDisCal(clusters[i]["indices"], clusters[j]["indices"], linkage, leafNodes)
                     if minVal>dis:
                         minVal = dis
@@ -226,16 +229,13 @@ def hierarchical(profiles, linkage='average'):
                 else:
                     dMatrix[i].append(0)
 
+        #form a new cluster between two nearest clusters
         newInnerNode = ExpressionCluster.make_inner(clusters[minPair[0]]["node"], clusters[minPair[1]]["node"])
         clusters[minPair[0]]["indices"] = clusters[minPair[0]]["indices"] + clusters[minPair[1]]["indices"]
         clusters[minPair[0]]["node"] = newInnerNode
-        # for i in clusters[minPair[1]]:
-        #     clusters[minPair[0]].append(i)
-        #
+
         del clusters[minPair[1]]
-        # # leafNodes[minPair[0]] = ExpressionCluster.make_inner(leafNodes[minPair[0]], leafNodes[minPair[1]])
-        # # del leafNodes[minPair[1]]
-        # ExpressionCluster.make_inner(leafNodes[minPair[0]], leafNodes[minPair[1]])
+
         size = 0;
         if len(clusters) == 1:
             size = clusters[0]["node"].cluster_size
@@ -243,7 +243,6 @@ def hierarchical(profiles, linkage='average'):
             size = clusters[minPair[0]]["node"].cluster_size
         numInClusters = max(numInClusters, size)
 
-    print 1
     return clusters[0]["node"]
 
 
@@ -261,6 +260,14 @@ def hierarchical_stub(profiles):
 # ------------------------------------------------------------------------
 # Supervised
 
+def sortEPbyDis(a, b):
+    if a[1] < b[1]:
+        return -1
+    else:
+        return 1
+    pass
+
+
 def neighbors(instance, others, k):
     """The k nearest neighbors to instance among others.
     Args:
@@ -271,6 +278,21 @@ def neighbors(instance, others, k):
       list of ExpressionProfile
     """
     # TODO: your code here
+    # calculate and sort the distance to all the other records
+    listOfDis = []
+    for i in range(len(others)):
+        listOfDis.append([others[i], calEucDis(instance.values, others[i].values)])
+    listOfDis.sort(sortEPbyDis)
+
+    # select K nearest neighbors and return their references
+    result = []
+    for j in range(len(listOfDis)):
+        if j>=k:
+            break
+        else:
+            result.append(listOfDis[j][0])
+
+    return result
     pass
 
 def knn(train, test, k):
@@ -283,6 +305,27 @@ def knn(train, test, k):
       list of string: labels for test instances, in same order
     """
     # TODO: your code here
+    result = []
+    for i in range(len(test)):
+        vote = {}
+        # record the voted result, and the label appears most is the answer
+        neighbours = neighbors(test[i], train, k)
+        for t in neighbours:
+            if t.label not in vote:
+                vote[t.label] = 1
+            else:
+                vote[t.label] += 1
+
+        votedLabel = None
+        maxVal = 0
+        for key, val in vote.iteritems():
+            if val>maxVal:
+                maxVal = val
+                votedLabel = key
+
+        result.append(votedLabel)
+
+    return result
     pass
 
 def xval(profiles, k, nfold=5, nrep=10):
@@ -306,6 +349,32 @@ def xval(profiles, k, nfold=5, nrep=10):
       {'A': 2.2, 'B': 4.0, 'C': 4.0}   # your mileage may vary due to randomness
     """
     # TODO: your code here
+    result = {}
+    for i in range(nrep):
+        # randomly shuffle all the data, and split them into nfold parts
+        folds = [[] for j in range(nfold)]
+        random.shuffle(profiles)
+
+        for x in range(len(profiles)):
+            folds[x%nfold].append(profiles[x])
+            if profiles[x].label not in result:
+                result[profiles[x].label] = 0
+
+        for x in range(nfold):
+            trainSet = []
+            for y in range(nfold):
+                if x!=y:
+                    trainSet += folds[y]
+            # calculate labels by KNN and compare to the actual labels
+            knnResult = knn(trainSet, folds[x], k)
+
+            for z in range(len(knnResult)):
+                if knnResult[z] == folds[x][z].label:
+                    result[knnResult[z]] += 1
+
+    for key, val in result.iteritems():
+        result[key] = val/float(nrep)
+    return result
     pass
 
 def relabel(profiles):
@@ -319,6 +388,14 @@ def relabel(profiles):
        [0:A, 1:B, 2:C, 3:B, 4:C, 5:B, 6:A, 7:C, 8:C, 9:B, 10:A, 11:A]   # will vary due to randomness
     """
     # TODO: your code here
+    # randomly shuffle all the labels and reassign to the EPs
+    listOfLabels = []
+    for i in range(len(profiles)):
+        listOfLabels.append(profiles[i].label)
+    random.shuffle(listOfLabels)
+    for j in range(len(profiles)):
+        profiles[j].label = listOfLabels[j]
+    return profiles
     pass
 
 # ------------------------------------------------------------------------
@@ -329,16 +406,20 @@ def relabel(profiles):
 #   perm <filename> <k> <nfold> <nrep>
 
 # Command-line driver -- just some hard-coded test cases -- add your own if you want
-profiles = ExpressionProfile.read("tests/simple.csv")
-hierarchical(profiles, 'average').pprint()
-'''if __name__ == '__main__':
-    command = argv[1]
-    profiles = ExpressionProfile.read(argv[2])
-    if command=='hier':
-        hierarchical(profiles, argv[3]).pprint()
-    elif command=='knn':
-        print xval(profiles, int(argv[3]), int(argv[4]), int(argv[5]))
-    elif command=='perm':
-        print xval(relabel(profiles), int(argv[3]), int(argv[4]), int(argv[5]))
-    else:
-        print('unknown command')'''
+# profiles = ExpressionProfile.read("tests/simple.csv")
+# plot_profiles(profiles)
+# print xval(relabel(profiles), 3)
+# print xval(profiles, 3)
+# hierarchical(profiles, 'min').pprint()
+
+# if __name__ == '__main__':
+#     command = argv[1]
+#     profiles = ExpressionProfile.read(argv[2])
+#     if command=='hier':
+#         hierarchical(profiles, argv[3]).pprint()
+#     elif command=='knn':
+#         print xval(profiles, int(argv[3]), int(argv[4]), int(argv[5]))
+#     elif command=='perm':
+#         print xval(relabel(profiles), int(argv[3]), int(argv[4]), int(argv[5]))
+#     else:
+#         print('unknown command')
